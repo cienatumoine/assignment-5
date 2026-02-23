@@ -1,13 +1,32 @@
-// Import packages, initialize an express app, and define the port you will use
+const express = require('express');
+const { body, validationResult } = require('express-validator');
 
+const app = express();
+const PORT = process.env.PORT || 3000;
 
+app.use(express.json());
 
-// Data for the server
-const menuItems = [
+// ------------------ LOGGING MIDDLEWARE ------------------
+app.use((req, res, next) => {
+  const ts = new Date().toISOString();
+  const base = `[${ts}] ${req.method} ${req.originalUrl}`;
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log(`${base} body=`, req.body);
+  } else {
+    console.log(base);
+  }
+
+  next();
+});
+
+// ------------------ SAMPLE DATA ------------------
+let nextId = 3;
+let menu = [
   {
     id: 1,
     name: "Classic Burger",
-    description: "Beef patty with lettuce, tomato, and cheese on a sesame seed bun",
+    description: "Beef patty with lettuce, tomato, cheese, sesame bun",
     price: 12.99,
     category: "entree",
     ingredients: ["beef", "lettuce", "tomato", "cheese", "bun"],
@@ -15,49 +34,144 @@ const menuItems = [
   },
   {
     id: 2,
-    name: "Chicken Caesar Salad",
-    description: "Grilled chicken breast over romaine lettuce with parmesan and croutons",
-    price: 11.50,
-    category: "entree",
-    ingredients: ["chicken", "romaine lettuce", "parmesan cheese", "croutons", "caesar dressing"],
-    available: true
-  },
-  {
-    id: 3,
-    name: "Mozzarella Sticks",
-    description: "Crispy breaded mozzarella served with marinara sauce",
-    price: 8.99,
-    category: "appetizer",
-    ingredients: ["mozzarella cheese", "breadcrumbs", "marinara sauce"],
-    available: true
-  },
-  {
-    id: 4,
     name: "Chocolate Lava Cake",
-    description: "Warm chocolate cake with molten center, served with vanilla ice cream",
-    price: 7.99,
+    description: "Warm cake with molten center + vanilla ice cream",
+    price: 7.5,
     category: "dessert",
-    ingredients: ["chocolate", "flour", "eggs", "butter", "vanilla ice cream"],
+    ingredients: ["flour", "cocoa", "eggs", "sugar", "butter"],
     available: true
-  },
-  {
-    id: 5,
-    name: "Fresh Lemonade",
-    description: "House-made lemonade with fresh lemons and mint",
-    price: 3.99,
-    category: "beverage",
-    ingredients: ["lemons", "sugar", "water", "mint"],
-    available: true
-  },
-  {
-    id: 6,
-    name: "Fish and Chips",
-    description: "Beer-battered cod with seasoned fries and coleslaw",
-    price: 14.99,
-    category: "entree",
-    ingredients: ["cod", "beer batter", "potatoes", "coleslaw", "tartar sauce"],
-    available: false
   }
 ];
 
-// Define routes and implement middleware here
+// ------------------ VALIDATION ------------------
+const menuValidators = [
+  body('name')
+    .exists({ checkFalsy: true }).withMessage('name required')
+    .isString().withMessage('name must be a string')
+    .isLength({ min: 3 }).withMessage('name min 3 chars'),
+
+  body('description')
+    .exists({ checkFalsy: true }).withMessage('description required')
+    .isString().withMessage('description must be a string')
+    .isLength({ min: 10 }).withMessage('description min 10 chars'),
+
+  body('price')
+    .exists().withMessage('price required')
+    .isFloat({ gt: 0 }).withMessage('price must be number > 0')
+    .toFloat(),
+
+  body('category')
+    .exists({ checkFalsy: true }).withMessage('category required')
+    .isString().withMessage('category must be string')
+    .isIn(['appetizer', 'entree', 'dessert', 'beverage']).withMessage('category must be appetizer, entree, dessert or beverage'),
+
+  body('ingredients')
+    .exists().withMessage('ingredients required')
+    .isArray({ min: 1 }).withMessage('ingredients must be array with at least 1 item'),
+
+  body('available')
+    .optional()
+    .isBoolean().withMessage('available must be boolean')
+    .toBoolean()
+];
+
+function handleValidation(req, res, next) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      errors: errors.array().map(e => ({ field: e.path, message: e.msg }))
+    });
+  }
+  next();
+}
+
+// ------------------ CRUD ROUTES ------------------
+
+// GET all
+app.get('/api/menu', (req, res) => {
+  res.status(200).json(menu);
+});
+
+// GET by id
+app.get('/api/menu/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const item = menu.find(m => m.id === id);
+
+  if (!item) {
+    return res.status(404).json({ error: 'Menu item not found' });
+  }
+
+  res.status(200).json(item);
+});
+
+// POST create
+app.post('/api/menu', menuValidators, handleValidation, (req, res) => {
+  const { name, description, price, category, ingredients, available } = req.body;
+
+  const newItem = {
+    id: nextId++,
+    name: name.trim(),
+    description: description.trim(),
+    price,
+    category,
+    ingredients,
+    available: typeof available === 'boolean' ? available : true
+  };
+
+  menu.push(newItem);
+  res.status(201).json(newItem);
+});
+
+// PUT update
+app.put('/api/menu/:id', menuValidators, handleValidation, (req, res) => {
+  const id = Number(req.params.id);
+  const idx = menu.findIndex(m => m.id === id);
+
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Menu item not found' });
+  }
+
+  const { name, description, price, category, ingredients, available } = req.body;
+
+  const updated = {
+    ...menu[idx],
+    name: name.trim(),
+    description: description.trim(),
+    price,
+    category,
+    ingredients,
+    available: typeof available === 'boolean' ? available : menu[idx].available
+  };
+
+  menu[idx] = updated;
+  res.status(200).json(updated);
+});
+
+// DELETE
+app.delete('/api/menu/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const idx = menu.findIndex(m => m.id === id);
+
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Menu item not found' });
+  }
+
+  const deleted = menu.splice(idx, 1)[0];
+  res.status(200).json(deleted);
+});
+
+// 404 route
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+/* Published API Link */
+/* https://documenter.getpostman.com/view/48299445/2sBXcEm1Ev*/
